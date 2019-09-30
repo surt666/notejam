@@ -32,20 +32,26 @@
 
 (defn insert [event]
   (let [type (event :type)
-        id (when (not= type "user") (get-tx type))
-        data (dissoc event :type :rel :email :action)
+        event-pk (event :pk)
+        id (when (and (or (= "" event-pk) (nil? event-pk)) (not= type "user")) (get-tx type))
+        data (dissoc event :type :rel :email :action :pk)
+        pk (cond
+             (= type "user") (event :email)
+             (and (not= "" event-pk) (not (nil? event-pk))) event-pk
+             :default (str type "-" id))
         item-list [{:put-request
-                    {:item (merge {:pk (if (= type "user") (event :email) (str type "-" id))
-                                   :sk (if (= type "user") (event :email) (str type "-" id))} data)}}
+                    {:item (merge {:pk pk
+                                   :sk pk} data)}}
                    (if (= type "pad")
                      {:put-request
-                      {:item {:pk (str type "-" id)
+                      {:item {:pk pk
                               :sk (when (event :rel) (event :rel))
                               :pad-name (event :pad-name)}}}
                      {:put-request
-                      {:item {:pk (str type "-" id)
+                      {:item {:pk pk
                               :sk (when (event :rel) (event :rel))
                               :note-name (event :note-name)}}})]]
+    (prn id (not= "" event-pk) (not (nil? event-pk)) event-pk type pk item-list)
     (ddb/batch-write-item
      :return-consumed-capacity "TOTAL"
      :return-item-collection-metrics "SIZE"

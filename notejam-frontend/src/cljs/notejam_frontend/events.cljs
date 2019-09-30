@@ -44,9 +44,10 @@
   :find-notes-response             
   (fn
     [db [_ response]]           ;; destructure the response from the event vector
+    (prn "NOTES" response)
     (-> db
         (assoc :loading? false) ;; take away that "Loading ..." UI 
-        (assoc :notes (:notes response)))))
+        (assoc :notes (:notes response) :edit-mode? false))))
 
 (re-frame/reg-event-db                   
   :find-note-response             
@@ -55,7 +56,31 @@
     (prn "RE" response)
     (-> db
         (assoc :loading? false) ;; take away that "Loading ..." UI 
-        (assoc :note response))))
+        (assoc :note-name (response :note-name) :note-text (response :note-text)))))
+
+(re-frame/reg-event-db                   
+  :create-response             
+  (fn
+    [db [_ response]]
+    (prn "RE" response)
+    (-> db
+        (assoc :loading? false) ;; take away that "Loading ..." UI 
+        (assoc :note-name "" :note-text "" :edit-mode? false :note-id ""))
+    (re-frame/dispatch [:show-notes (db :pad-id)])))
+
+(re-frame/reg-event-db                   
+  :edit            
+  (fn
+    [db [_ response]]
+    (-> db
+        (assoc :edit-mode? true))))
+
+(re-frame/reg-event-db                   
+  :new            
+  (fn
+    [db [_ response]]
+    (-> db
+        (assoc :edit-mode? true :note-name "" :note-text ""))))
 
 (re-frame.core/reg-event-fx   
  :login               
@@ -104,7 +129,7 @@
                                    ) 
                  :on-success      [:find-notes-response]
                  :on-failure      [:bad-response]}
-    :db  (assoc db :loading? true)}))
+    :db  (assoc db :loading? true :pad-id pad-id :edit-mode? false)}))
 
 (re-frame.core/reg-event-fx   
  :show-note              
@@ -119,5 +144,26 @@
                  :response-format (ajax/json-response-format  {:keywords? true}
                                    ) 
                  :on-success      [:find-note-response]
+                 :on-failure      [:bad-response]}
+    :db  (assoc db :loading? true :note-id note-id)}))
+
+(re-frame.core/reg-event-fx   
+ :create             
+ (fn                
+   [{db :db} [_ nn nt]]
+   ;; we return a map of (side) effects
+   (prn "NNT" nn nt)
+   {:http-xhrio {:method          :post
+                 :uri             "https://c2k7l9lkog.execute-api.eu-west-1.amazonaws.com/dev"
+                 :params          {:action "insert"
+                                   :type "note"
+                                   :pk (db :note-id)
+                                   :rel (db :pad-id)
+                                   :note-name nn
+                                   :note-text nt}
+                 :format          (ajax/json-request-format)
+                 :response-format (ajax/json-response-format  {:keywords? true}
+                                   ) 
+                 :on-success      [:create-response]
                  :on-failure      [:bad-response]}
     :db  (assoc db :loading? true)}))

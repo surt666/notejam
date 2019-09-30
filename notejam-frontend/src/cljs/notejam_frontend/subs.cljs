@@ -21,3 +21,23 @@
  ::notes
  (fn [db]
    (:notes db)))
+
+(re-frame/reg-sub
+ ::note-name
+ (fn [db]
+   (:note-name db)))
+
+(re-frame/reg-sub
+ ::note-text
+ (fn [db]
+   (:note-text db)))
+
+(re-frame/reg-sub
+ ::edit-mode?
+ (fn [db]
+   (:edit-mode? db)))
+
+(re-frame/reg-sub
+ ::pad-id
+ (fn [db]
+   (:pad-id db)))

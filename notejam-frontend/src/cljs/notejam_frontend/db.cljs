@@ -5,4 +5,8 @@
    :logged-in? false
    :pads []
    :notes []
-   :note {}})
+   :note-name ""
+   :note-text ""
+   :edit-mode? false
+   :pad-id ""
+   :note-id ""})
