@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SpeedPerform Lambda CI
+Parameters:
+  GitHubUser:
+    Type: String
+    Description: GitHub User
+    Default: ""
+  GitHubRepo:
+    Type: String
+    Description: GitHub Repo to pull from. Only the Name. not the URL
+    Default: ""
+  GitHubBranch:
+    Type: String
+    Description: GitHub Branch
+    Default: "master"
+  GitHubToken:
+    NoEcho: true
+    Type: String
+    Description: Secret. It might look something like 9b189a1654643522561f7b3ebd44a1531a4287af OAuthToken with access to Repo. Go to https://github.com/settings/tokens
+  BuildType:
+    Type: String
+    Default: "LINUX_CONTAINER"
+    Description: The build container type to use for building the app
+  BuildComputeType:
+    Type: String
+    Default: "BUILD_GENERAL1_SMALL"
+    Description: The build compute type to use for building the app
+  BuildImage:
+    Type: String
+    Default: "aws/codebuild/standard:2.0"
+    Description: The build image to use for building the app
+  S3Bucket:
+    Type: String
+    Default: "codepipeline-eu-west-1-127584417609"
+    Description: S3 Bucket to use for source and build output
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "GitHub Configuration"
+        Parameters:
+          - GitHubToken
+          - GitHubUser
+          - GitHubRepo
+          - GitHubBranch
+      - Label:
+          default: "Build Configuration"
+        Parameters:
+          - BuildType
+          - BuildComputeType
+          - BuildImage
+          - CreateDeployStage
+    ParameterLabels:
+      GitHubToken:
+        default: GitHub OAuth2 Token
+      GitHubUser:
+        default: GitHub User/Org Name
+      GitHubRepo:
+        default: GitHub Repository Name
+      GitHubBranch:
+        default: GitHub Branch Name
+      BuildType:
+        default: CodeBuild type
+      BuildComputeType:
+        default: CodeBuild instance type
+      BuildImage:
+        default: CodeBuild image
+Resources:
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: codebuild-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+            Version: "2012-10-17"
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: codepipeline-service
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - codebuild:*
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - s3:PutObject
+                Resource:
+                  - arn:aws:s3:::codepipeline*
+                Effect: Allow
+              - Action:
+                  - s3:*
+                  - cloudformation:*
+                  - iam:PassRole
+                  - sns:Subscribe
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+                Resource: "*"
+                Effect: Allow
+            Version: "2012-10-17"
+  CodeBuildPrepareZip:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Name: !Sub ${AWS::StackName}-Build
+      Description: Build .Net API Lambda
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: !Ref BuildType
+        ComputeType: !Ref BuildComputeType
+        Image: !Sub ${BuildImage}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                dotnet: 2.2
+              commands:
+                - mkdir -p ~/.ssh
+                - aws s3 cp s3://sp-credentials-bucket/id_rsa ~/.ssh
+                - chmod 600 ~/.ssh/id_rsa
+                - ssh-keygen -F github.com || ssh-keyscan github.com >>~/.ssh/known_hosts
+                - git config --global url."git@github.com:".insteadOf "https://github.com/"
+                - git init
+                - git remote add origin git@github.com:${GitHubUser}/${GitHubRepo}.git
+                - git fetch
+                - git checkout -t -f origin/${GitHubBranch}
+                - git submodule init
+                - git submodule update --recursive
+            pre_build:
+              commands:
+                - echo Using tooling dotnet version `dotnet --version`
+                - echo Restore started on `date`
+                - dotnet restore -v quiet src/SpAgents.Api/SpAgents.Api.csproj
+            build:
+              commands:
+                - echo Build started on `date`
+                - dotnet publish -c Release -v quiet -o ./build_output src/SpAgents.Api/SpAgents.Api.csproj
+          artifacts:
+            type: zip 
+            files:
+              - src/SpAgents.Api/build_output/**/*
+            discard-paths: yes
+      TimeoutInMinutes: 10
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - InputArtifacts: []
+              Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: "1"
+                Provider: GitHub
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                Owner: !Ref GitHubUser
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildPrepareZip
+              RunOrder: 1
+        - Name: CloudFormation
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                RoleArn: !GetAtt [CFNRole, Arn]
+                StackName:
+                  !Join
+                   - '-'
+                   - - !Ref AWS::StackName
+                     - !Join
+                        - '-'
+                        - !Split
+                           - '/'
+                           - !Ref GitHubBranch
+                ChangeSetName: ChangesFromGitHub
+                Capabilities: "CAPABILITY_IAM"
+                TemplateConfiguration: !Sub "BuildOutput::prod-api-config.json"
+                TemplatePath: !Sub "BuildOutput::sam.yaml"
+                ParameterOverrides: !Sub '{"GitBranch" : "${GitHubBranch}"}'
+              RunOrder: 1
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: ChangesFromGitHub
+                Capabilities: "CAPABILITY_IAM"
+                RoleArn: !GetAtt [CFNRole, Arn]
+                OutputFileName: ExecuteStackOutput.json
+                StackName:
+                  !Join
+                   - '-'
+                   - - !Ref AWS::StackName
+                     - !Join
+                        - '-'
+                        - !Split
+                           - '/'
+                           - !Ref GitHubBranch
+              RunOrder: 2
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+  CFNRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ["sts:AssumeRole"]
+            Effect: Allow
+            Principal:
+              Service: [cloudformation.amazonaws.com]
+        Version: "2012-10-17"
+      Path: /
+      Policies:
+        - PolicyName: CloudFormationRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "cloudformation:*"
+                  - "lambda:*"
+                  - "dynamodb:*"
+                  - "apigateway:*"
+                  - "iam:*"
+                  - "application-autoscaling:*"
+                  - "s3:*"
+                  - "sns:*"
+                  - "acm:*"
+                  - "events:*"
+                Effect: Allow
+                Resource: "*"
+Outputs:
+  PipelineUrl:
+    Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}
+    Description: CodePipeline URL
+  PipelineId:
+    Value: !Sub ${Pipeline}
+    Description: Code Pipeline ID
