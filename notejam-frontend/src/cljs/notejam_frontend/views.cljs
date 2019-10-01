@@ -6,9 +6,23 @@
    [reagent.core :as reagent]))
 
 (defn title []
-  [re-com/title
-   :label "Notejam:"
-   :level :level1])
+  (let [username (re-frame/subscribe [::subs/username])]
+    (fn []
+      [re-com/h-box
+       :width "100%"
+       :gap "20px"
+       :justify :between
+       :children
+       [[re-com/box
+         :child
+         [re-com/title
+          :label "Notejam:"
+          :level :level1]]
+        [re-com/box
+         :margin "20px"
+         :child
+         [re-com/title
+          :label @username]]]]))) 
 
 (def username (reagent/atom ""))
 (def password (reagent/atom ""))
@@ -132,6 +146,7 @@
 (defn main-panel []
   [re-com/v-box
    :height "100%"
+   :width "1000px"
    :margin "40px"
    :gap "20px"
    :children (choose-view)])

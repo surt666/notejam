@@ -65,8 +65,7 @@
     (prn "RE" response)
     (-> db
         (assoc :loading? false) ;; take away that "Loading ..." UI 
-        (assoc :note-name "" :note-text "" :edit-mode? false :note-id ""))
-    (re-frame/dispatch [:show-notes (db :pad-id)])))
+        (assoc :note-name "" :note-text "" :edit-mode? false :note-id ""))))
 
 (re-frame/reg-event-db                   
   :edit            
